@@ -3,7 +3,7 @@
 #include <WiFi.h>
 #include <ESP32Servo.h>
 #include <Adafruit_NeoPixel.h>
-#include <AccelStepper.h> // ¡Nueva Librería!
+#include <AccelStepper.h>
 
 #define PIN_SERVO_DER 14
 #define PIN_SERVO_IZQ 13
@@ -14,10 +14,13 @@
 #define PIN_NEOPIXEL 18
 #define PIN_SERVO_DISCO 19
 
-// --- NUEVOS PINES: ELEVADOR Y TRANSISTOR ---
+// --- PINES ELEVADOR Y TRANSISTOR ---
 #define PIN_STEP 32
 #define PIN_DIR 21
 #define PIN_LEDS_PISO2 22
+
+// --- PIN DEL VENTILADOR (L298N) ---
+#define PIN_ENA_VENTILADOR 4
 
 // --- AJUSTES SERVOS ENTRADA ---
 int cerradoIzq = 0, abiertoIzq = 80;
@@ -37,12 +40,15 @@ bool oficinaPintada = false;
 // --- AJUSTES ELEVADOR ---
 AccelStepper elevador(1, PIN_STEP, PIN_DIR);
 int piso1 = 0;
-int piso2 = -1050; // Calibrado por el ingeniero
+int piso2 = -1050; 
 
-bool elevadorEnPiso1 = true;
-bool elevadorEnViaje = false;
-bool esperandoPasajeros = false;
-unsigned long tiempoApertura = 0;
+bool elevadorEnPiso1 = true;      
+bool elevadorEnViaje = false;     
+bool esperandoPasajeros = false;  
+unsigned long tiempoApertura = 0; 
+
+// --- AJUSTE VELOCIDAD VENTILADOR ---
+int velocidadVentilador = 200; // Velocidad de crucero
 
 // --- DICCIONARIO ACTUALIZADO ---
 typedef struct struct_message
@@ -50,8 +56,9 @@ typedef struct struct_message
     bool presenciaPasillo;
     bool presenciaEntrada;
     bool fiestaActiva;
-    bool touchPiso1; // ¡Nuevo!
-    bool touchPiso2; // ¡Nuevo!
+    bool touchPiso1; 
+    bool touchPiso2; 
+    bool ventiladorActivo; // ¡Nuevo!
 } struct_message;
 
 struct_message datosRecibidos;
@@ -71,9 +78,13 @@ void setup()
     pinMode(LED2_PIN, OUTPUT);
     pinMode(LED3_PIN, OUTPUT);
     pinMode(LED_ENTRADA, OUTPUT);
-    pinMode(PIN_LEDS_PISO2, OUTPUT); // Pin del Transistor
+    pinMode(PIN_LEDS_PISO2, OUTPUT); 
+    
+    // Setup del Ventilador
+    pinMode(PIN_ENA_VENTILADOR, OUTPUT);
+    analogWrite(PIN_ENA_VENTILADOR, 0); // Apagado por defecto
 
-    digitalWrite(PIN_LEDS_PISO2, LOW); // LEDs del piso 2 apagados al iniciar
+    digitalWrite(PIN_LEDS_PISO2, LOW); 
 
     ESP32PWM::allocateTimer(0);
     ESP32PWM::allocateTimer(1);
@@ -86,8 +97,7 @@ void setup()
     servoIzq.write(cerradoIzq);
     servoDer.write(cerradoDer);
 
-    // Ajustes Premium del Elevador
-    elevador.setMaxSpeed(150);
+    elevador.setMaxSpeed(150);      
     elevador.setAcceleration(80);
 
     WiFi.mode(WIFI_STA);
@@ -122,7 +132,7 @@ void loop()
         }
     }
 
-    // 3. FIESTA
+    // 3. FIESTA 
     if (datosRecibidos.fiestaActiva)
     {
         oficinaPintada = false;
@@ -157,66 +167,45 @@ void loop()
         servoDisco.write(37);
     }
 
-    // -----------------------------------------------------
-    // 4. LÓGICA DEL ELEVADOR INTELIGENTE (Sin Delays)
-    // -----------------------------------------------------
-
-    // A) Detectar si presionan un botón (solo si el elevador no se está moviendo)
-    if (!elevadorEnViaje && !esperandoPasajeros)
-    {
-        if (datosRecibidos.touchPiso1 || datosRecibidos.touchPiso2)
-        {
+    // 4. LÓGICA DEL ELEVADOR 
+    if (!elevadorEnViaje && !esperandoPasajeros) {
+        if (datosRecibidos.touchPiso1 || datosRecibidos.touchPiso2) {
             esperandoPasajeros = true;
-            tiempoApertura = tiempoActual;
-            Serial.println("Botón Touch presionado: Esperando 3 segundos...");
+            tiempoApertura = tiempoActual; 
         }
     }
 
-    // B) Temporizador de espera (3 segundos)
-    if (esperandoPasajeros)
-    {
-        if (tiempoActual - tiempoApertura >= 3000)
-        {
-            esperandoPasajeros = false;
-            elevadorEnViaje = true;
-
-            // Enviamos el elevador al piso contrario
-            if (elevadorEnPiso1)
-            {
-                Serial.println("Viajando al Piso 2...");
+    if (esperandoPasajeros) {
+        if (tiempoActual - tiempoApertura >= 3000) {
+            esperandoPasajeros = false; 
+            elevadorEnViaje = true;     
+            
+            if (elevadorEnPiso1) {
                 elevador.moveTo(piso2);
-            }
-            else
-            {
-                Serial.println("Viajando al Piso 1...");
+            } else {
                 elevador.moveTo(piso1);
             }
         }
     }
 
-    // C) Mantener el motor en movimiento (se ejecuta súper rápido en cada loop)
-    if (elevadorEnViaje)
-    {
-        elevador.run();
-
-        // Si la distancia restante es 0, ya llegó.
-        if (elevador.distanceToGo() == 0)
-        {
-            elevadorEnViaje = false;
-            elevadorEnPiso1 = !elevadorEnPiso1; // Actualizamos el piso
-
-            Serial.println("¡Elevador en destino!");
-
-            // Encendemos/Apagamos el transistor 2N2222
-            if (elevadorEnPiso1)
-            {
-                digitalWrite(PIN_LEDS_PISO2, LOW); // Apaga LEDs del piso 2
-            }
-            else
-            {
-                digitalWrite(PIN_LEDS_PISO2, HIGH); // Prende LEDs del piso 2
+    if (elevadorEnViaje) {
+        elevador.run(); 
+        if (elevador.distanceToGo() == 0) {
+            elevadorEnViaje = false; 
+            elevadorEnPiso1 = !elevadorEnPiso1; 
+            if (elevadorEnPiso1) {
+                digitalWrite(PIN_LEDS_PISO2, LOW); 
+            } else {
+                digitalWrite(PIN_LEDS_PISO2, HIGH); 
             }
         }
+    }
+
+    // 5. CONTROL DEL VENTILADOR (CLIMA)
+    if (datosRecibidos.ventiladorActivo) {
+        analogWrite(PIN_ENA_VENTILADOR, velocidadVentilador);
+    } else {
+        analogWrite(PIN_ENA_VENTILADOR, 0);
     }
 
     delay(20);
