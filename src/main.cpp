@@ -227,6 +227,4 @@ void loop()
     {
         servoPluma.write(0); // Baja a 0 grados
     }
-
-    delay(20);
 }
