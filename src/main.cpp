@@ -410,14 +410,14 @@ void loop()
         if (estadoPuertasActual)
         {
             servoIzq.write(abiertoIzq);
-            delay(200);
+            delay(500);
             servoDer.write(abiertoDer);
             digitalWrite(LED_ENTRADA, HIGH);
         }
         else
         {
             servoIzq.write(cerradoIzq);
-            delay(200);
+            delay(500);
             servoDer.write(cerradoDer);
             digitalWrite(LED_ENTRADA, LOW);
         }
